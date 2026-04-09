@@ -468,4 +468,151 @@ async def cb_handler(client, query: CallbackQuery):
         user_data.pop(u_id, None)
 
     elif data == "toggle_mode":
-        curr_data 
+        curr_data = await get_config("bot_mode")
+        curr = curr_data["mode"] if curr_data else "User"
+        new = "Admin" if curr == "User" else "User"
+        await settings_db.update_one({"id": "bot_mode"}, {"$set": {"mode": new}}, upsert=True)
+        await query.edit_message_reply_markup(InlineKeyboardMarkup([[InlineKeyboardButton(f"🤖 Bot Mode: {new}", callback_data="toggle_mode")], [InlineKeyboardButton("❌ Close", callback_data="close_admin")]]))
+
+    elif data == "set_start_media":
+        admin_state[u_id] = "set_start_media"
+        await query.edit_message_text("🖼 Send the Photo or Video for Wallpaper:")
+
+    elif data == "rm_start_media":
+        await settings_db.delete_one({"id": "start_media"})
+        await query.answer("Wallpaper Removed!")
+        await query.message.delete()
+
+    elif data == "set_welcome_msg":
+        admin_state[u_id] = "set_welcome_msg"
+        await query.edit_message_text("📝 Send the New Welcome Message:")
+
+    elif data == "rm_welcome_msg":
+        await settings_db.delete_one({"id": "welcome_msg"})
+        await query.answer("Message Reset!")
+        await query.message.delete()
+
+    elif data == "rm_brand":
+        await settings_db.delete_one({"id": "brand_config"})
+        await query.answer("Branding Removed!")
+        await query.message.delete()
+
+    elif data == "clear_all_exec":
+        await batches_db.delete_many({})
+        await query.answer("All links deleted!", show_alert=True)
+        await query.message.delete()
+
+    elif data == "list_all_b":
+        await query.answer("Please wait...")
+        t = "FULL BATCH LIST\n"
+        async for b in batches_db.find({}):
+            t += f"ID: {b['_id']} | Media: {len(b['files'])}\n"
+        with open("batch_report.txt", "w") as f:
+            f.write(t)
+        await query.message.reply_document("batch_report.txt")
+        os.remove("batch_report.txt")
+
+    elif data == "add_more" or data == "close_admin":
+        await query.message.delete()
+
+    elif data == "cancel":
+        user_data.pop(u_id, None)
+        await query.message.edit_text("❌ Batch Process Cancelled.")
+
+    elif data == "add_ch":
+        admin_state[u_id] = "add_ch"
+        await query.edit_message_text("Send ID or Username of Channel:")
+
+    elif data == "del_ch":
+        admin_state[u_id] = "del_ch"
+        await query.edit_message_text("Send ID to Delete:")
+
+    elif data == "list_chs":
+        t = "ForceSub Channels:\n"
+        async for c in channels_db.find({}):
+            t += f"- {c['title']} (`{c['_id']}`)\n"
+        await query.edit_message_text(t, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="close_admin")]]))
+
+    elif data == "del_b_id":
+        admin_state[u_id] = "del_b_id"
+        await query.edit_message_text("Send Batch ID to Delete:")
+
+    elif data == "set_brand":
+        admin_state[u_id] = "set_brand"
+        await query.edit_message_text("Send Brand Channel username/ID:")
+
+    elif data == "clear_all_confirm":
+        await query.edit_message_text("⚠️ **DANGER!**\nAre you sure you want to delete ALL links?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Confirm Delete", callback_data="clear_all_exec")], [InlineKeyboardButton("❌ Cancel", callback_data="close_admin")]]))
+
+    elif data.startswith("edit_cap_"):
+        idx = int(data.split("_")[2])
+        admin_state[u_id] = {"action": "edit_cap", "index": idx}
+        await query.edit_message_text(f"📝 Send new caption for file {idx + 1}:")
+
+# --- ADMIN INPUT HANDLER ---
+@app.on_message(filters.private & filters.user(ADMINS), group=1)
+async def admin_inputs(client, message):
+    a_id = message.from_user.id
+    if a_id not in admin_state:
+        return
+    state = admin_state[a_id]
+    text = message.text.strip() if message.text else ""
+    try:
+        if state in ["add_ch", "set_brand"]:
+            # Input parsing logic
+            target = f"-100{text}" if text.isdigit() and not text.startswith("-") else text
+            chat = await client.get_chat(target)
+            if state == "add_ch":
+                await channels_db.update_one({"_id": chat.id}, {"$set": {"title": chat.title}}, upsert=True)
+                await message.reply(f"✅ Added ForceSub: {chat.title}")
+            elif state == "set_brand":
+                link = chat.invite_link or f"https://t.me/{chat.username}"
+                await settings_db.update_one({"id": "brand_config"}, {"$set": {"link": link}}, upsert=True)
+                await message.reply(f"✅ Branding Set: {link}")
+        
+        elif state == "del_ch":
+            target = f"-100{text}" if text.isdigit() and not text.startswith("-") else text
+            await channels_db.delete_one({"_id": int(target) if isinstance(target, str) and target.startswith("-") else target})
+            await message.reply("✅ Channel Removed.")
+
+        elif state == "del_b_id":
+            res = await batches_db.delete_one({"_id": text})
+            if res.deleted_count > 0:
+                await message.reply(f"✅ Deleted Batch ID: `{text}`")
+                await send_log(f"🗑 **Batch Deleted:** `{text}`")
+            else:
+                await message.reply("❌ Batch ID not found.")
+
+        elif isinstance(state, dict) and state.get("action") == "edit_cap":
+            idx = state["index"]
+            user_data[a_id][idx]["caption"] = message.text.html
+            btns = [[InlineKeyboardButton("➕ Add More", callback_data="add_more")], [InlineKeyboardButton("🔗 Get Link", callback_data="get_link"), InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+            await message.reply(f"✅ Caption Updated! Total Files: {len(user_data[a_id])}", reply_markup=InlineKeyboardMarkup(btns))
+
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+    
+    admin_state.pop(a_id, None)
+
+# --- STARTUP ---
+async def start_services():
+    Thread(target=run_flask, daemon=True).start()
+    await app.start()
+    await app.set_bot_commands([
+        BotCommand("start", "Start Bot"), 
+        BotCommand("store", "Create Multi-Media Batch"),
+        BotCommand("edit_link", "Create Post with Button"), # Added Command
+        BotCommand("settings", "Bot Mode Settings"), 
+        BotCommand("batches", "Link Manager"),
+        BotCommand("forcesub", "Channel Manager"), 
+        BotCommand("brand", "Branding Settings"),
+        BotCommand("wallpaper", "Wallpaper Settings"), 
+        BotCommand("welcome", "Custom Welcome Text"),
+        BotCommand("stats", "Live Statistics"), 
+        BotCommand("broadcast", "Send news to Users")
+    ])
+    await send_log("🚀 **Bot V21 Pro Max - Live & Stable!**\nAll Media Systems Active.")
+    await idle()
+
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(start_services())
