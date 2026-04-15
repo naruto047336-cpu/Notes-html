@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>TALLY  Accounting </title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+
+        .header {
+            background: #0f172a;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .container { padding: 10px; max-width: 900px; margin: auto; }
+
+        /* Form Card Styling */
+        .card {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        .input-group { display: flex; gap: 8px; margin-bottom: 10px; }
+        input, select { 
+            padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; 
+            font-size: 15px; width: 100%; box-sizing: border-box;
+        }
+        
+        button { padding: 12px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .btn-add { background: #f8fafc; color: #475569; border: 1px dashed #94a3b8; width: 100%; margin-bottom: 10px; }
+        .btn-save { background: #2563eb; color: white; width: 100%; font-size: 16px; }
+        .btn-tool { background: white; border: 1px solid #cbd5e1; flex: 1; font-size: 13px; }
+
+        /* --- REGISTER TABLE STYLE --- */
+        .register-wrapper {
+            background: white;
+            padding: 5px;
+            overflow-x: auto;
+            border: 1px solid #000;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px;
+            background: #fff;
+        }
+
+        th {
+            border: 1px solid #000;
+            padding: 10px;
+            background: #e2e8f0;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+
+        td {
+            border-left: 1px solid #000;
+            border-right: 1px solid #000;
+            padding: 6px 10px;
+            vertical-align: top;
+            font-size: 15px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        /* Particulars width kam ki gayi hai */
+        .col-sr { width: 10px; text-align: center; }
+        .col-particulars { width: 200px;  } /* Yahan width set ki hai */
+        .col-amt { width: 10px; text-align: right; font-weight: bold; }
+
+        .dr-line { display: flex; justify-content: space-between; width: 100%; }
+        .cr-line { padding-left: 35px; margin: 4px 0; }
+        .narration { 
+            font-size: 13px; font-style: italic; color: #003DFF; font-weight:bold;
+            border-bottom: 1px solid #000; display: block; padding-bottom: 8px; margin-bottom: 5px;
+        }
+
+        .total-row td {
+            border-top: 2px solid #000;
+            border-bottom: 2px double #000;
+            background: #f1f5f9;
+        }
+
+        @media print {
+            .no-print { display: none; }
+            body { background: white; }
+            .register-wrapper { border: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header no-print">TALLY NOTE WORK </div>
+
+<div class="container">
+    
+    <!-- Input Section -->
+    <div class="card no-print">
+        <div class="input-group">
+            <input type="text" id="sr" placeholder="S.No. / Date" style="width: 35%;">
+            <input type="text" id="note" placeholder="Narration (Being...)" style="width: 65%;">
+        </div>
+
+        <div style="color: green; font-weight: bold; font-size: 12px; margin-bottom: 5px;">DEBIT (Dr)</div>
+        <div id="drRows"></div>
+        <button class="btn-add" onclick="addRow('drRows')">+ Add Dr Row</button>
+
+        <div style="color: red; font-weight: bold; font-size: 12px; margin-top: 10px; margin-bottom: 5px;">CREDIT (Cr)</div>
+        <div id="crRows"></div>
+        <button class="btn-add" onclick="addRow('crRows')">+ Add Cr Row</button>
+
+        <button class="btn-save" id="saveBtn" onclick="saveEntry()">💾 SAVE TRANSACTION</button>
+    </div>
+
+    <!-- Features & Report Switching -->
+    <div class="card no-print">
+        <div class="input-group">
+            <select id="reportType" onchange="renderReport()">
+                <option value="journal">View: Journal </option>
+                <option value="quick">View: Quick Report (All in One)</option>
+                <option value="ledger">View: Ledger Accounts</option>
+                <option value="trial">View: Trial Balance</option>
+            </select>
+        </div>
+        <div style="display:flex; gap:5px;">
+            <button class="btn-tool" onclick="downloadPDF()">📄 PDF</button>
+            <button class="btn-tool" onclick="copyData()">📋 Copy</button>
+            <button class="btn-tool" onclick="clearData()" style="color:red;">🗑 Reset</button>
+        </div>
+    </div>
+
+    <!-- Output Area -->
+    <div class="register-wrapper" id="printArea">
+        <div id="outputContent">
+            <!-- Table content dynamically generated -->
+        </div>
+    </div>
+</div>
+
+<script>
+    let entries = JSON.parse(localStorage.getItem("tally_pro_data") || "[]");
+    let editIndex = -1;
+
+    window.onload = () => {
+        addRow('drRows');
+        addRow('crRows');
+        renderReport();
+    };
+
+    function addRow(id, name="", amt="") {
+        const div = document.createElement('div');
+        div.className = 'input-group';
+        div.innerHTML = `
+            <input type="text" placeholder="A/c Name" class="acc-n" value="${name}">
+            <input type="number" placeholder="Amt" class="acc-a" style="width:110px;" value="${amt}">
+            <button onclick="this.parentElement.remove()" style="color:red; background:none; padding:5px;">✕</button>
+        `;
+        document.getElementById(id).appendChild(div);
+    }
+
+    function saveEntry() {
+        let drs = [], crs = [];
+        document.querySelectorAll("#drRows .input-group").forEach(row => {
+            let n = row.querySelector(".acc-n").value;
+            let a = Number(row.querySelector(".acc-a").value);
+            if(n && a) drs.push({name: n, amt: a});
+        });
+        document.querySelectorAll("#crRows .input-group").forEach(row => {
+            let n = row.querySelector(".acc-n").value;
+            let a = Number(row.querySelector(".acc-a").value);
+            if(n && a) crs.push({name: n, amt: a});
+        });
+
+        if(!drs.length || !crs.length) return alert("Abe Koi 🤧 Entry to kr !");
+
+        let entryData = {
+            sr: document.getElementById('sr').value || (entries.length + 1),
+            note: document.getElementById('note').value,
+            drs, crs
+        };
+
+        if(editIndex === -1) entries.push(entryData);
+        else entries[editIndex] = entryData;
+
+        localStorage.setItem("tally_pro_data", JSON.stringify(entries));
+        location.reload(); 
+    }
+
+    function renderReport() {
+        const type = document.getElementById('reportType').value;
+        const out = document.getElementById('outputContent');
+        
+        if(type === 'journal') out.innerHTML = genJournal();
+        else if(type === 'ledger') out.innerHTML = genLedger();
+        else if(type === 'trial') out.innerHTML = genTrial();
+        else if(type === 'quick') {
+            // Quick Report logic: teeno reports ko combine karta hai
+            out.innerHTML = `
+                <h3 style="text-align:center; background:#0f172a; color:#fff; padding:5px;">JOURNAL REGISTER</h3>
+                ${genJournal()}
+                <br>
+                <h3 style="text-align:center; background:#0f172a; color:#fff; padding:5px;">LEDGER ACCOUNTS</h3>
+                ${genLedger()}
+                <br>
+                <h3 style="text-align:center; background:#0f172a; color:#fff; padding:5px;">TRIAL BALANCE</h3>
+                ${genTrial()}
+            `;
+        }
+    }
+
+    // --- JOURNAL GENERATOR ---
+    function genJournal() {
+        let html = `<table><tr><th class="col-sr">S.No</th><th class="col-particulars">Particulars</th><th class="col-amt">Debit</th><th class="col-amt">Credit</th></tr>`;
+        let totalDr = 0, totalCr = 0;
+
+        entries.forEach((e, idx) => {
+            e.drs.forEach((d, i) => {
+                totalDr += d.amt;
+                html += `<tr><td>${i===0?e.sr:''}</td><td class="col-particulars"><div class="dr-line"><span>${d.name}</span><span>Dr.</span></div></td><td class="col-amt">${d.amt}</td><td></td></tr>`;
+            });
+            e.crs.forEach(c => {
+                totalCr += c.amt;
+                html += `<tr><td></td><td class="col-particulars"><div class="cr-line">To ${c.name}</div></td><td></td><td class="col-amt">${c.amt}</td></tr>`;
+            });
+            html += `<tr><td></td><td colspan="3"><span class="narration">(Being ${e.note}) <button class="no-print" onclick="editEntry(${idx})" style="font-size:10px;">Edit</button></span></td></tr>`;
+        });
+
+        html += `<tr class="total-row"><td></td><td style="text-align:right;">TOTAL</td><td class="col-amt">${totalDr}</td><td class="col-amt">${totalCr}</td></tr></table>`;
+        return html;
+    }
+
+    // --- LEDGER GENERATOR ---
+    function genLedger() {
+        let accounts = {};
+        entries.forEach(e => {
+            e.drs.forEach(d => { if(!accounts[d.name]) accounts[d.name] = []; accounts[d.name].push({date: e.sr, type: 'Dr', amt: d.amt}); });
+            e.crs.forEach(c => { if(!accounts[c.name]) accounts[c.name] = []; accounts[c.name].push({date: e.sr, type: 'Cr', amt: c.amt}); });
+        });
+
+        let html = "";
+        for(let acc in accounts) {
+            html += `<h4 style="margin:10px 0 5px 0;">${acc} Account</h4><table><tr><th>Ref</th><th>Type</th><th>Debit</th><th>Credit</th></tr>`;
+            accounts[acc].forEach(ln => {
+                html += `<tr><td>${ln.date}</td><td>${ln.type}</td><td class="col-amt">${ln.type==='Dr'?ln.amt:''}</td><td class="col-amt">${ln.type==='Cr'?ln.amt:''}</td></tr>`;
+            });
+            html += `</table><br>`;
+        }
+        return html || "No data.";
+    }
+
+    // --- TRIAL BALANCE GENERATOR ---
+    function genTrial() {
+        let balances = {};
+        entries.forEach(e => {
+            e.drs.forEach(d => balances[d.name] = (balances[d.name] || 0) + d.amt);
+            e.crs.forEach(c => balances[c.name] = (balances[c.name] || 0) - c.amt);
+        });
+
+        let html = `<table><tr><th>Account Name</th><th class="col-amt">Debit</th><th class="col-amt">Credit</th></tr>`;
+        let td = 0, tc = 0;
+        for(let acc in balances) {
+            let b = balances[acc];
+            if(b > 0) { html += `<tr><td>${acc}</td><td class="col-amt">${b}</td><td></td></tr>`; td += b; }
+            else if(b < 0) { html += `<tr><td>${acc}</td><td></td><td class="col-amt">${Math.abs(b)}</td></tr>`; tc += Math.abs(b); }
+        }
+        html += `<tr class="total-row"><td>TOTAL</td><td class="col-amt">${td}</td><td class="col-amt">${tc}</td></tr></table>`;
+        return html;
+    }
+
+    function editEntry(i) {
+        let e = entries[i];
+        editIndex = i;
+        document.getElementById('sr').value = e.sr;
+        document.getElementById('note').value = e.note;
+        document.getElementById('drRows').innerHTML = "";
+        document.getElementById('crRows').innerHTML = "";
+        e.drs.forEach(d => addRow('drRows', d.name, d.amt));
+        e.crs.forEach(c => addRow('crRows', c.name, c.amt));
+        document.getElementById('saveBtn').innerText = "Update Transaction";
+        window.scrollTo(0,0);
+    }
+
+    function clearData() { if(confirm("Clear all data?")) { localStorage.clear(); location.reload(); } }
+
+    function copyData() {
+        let range = document.createRange();
+        range.selectNode(document.getElementById("outputContent"));
+        window.getSelection().addRange(range);
+        document.execCommand("copy");
+        alert("Copied to clipboard!");
+    }
+
+    function downloadPDF() {
+        const element = document.getElementById('printArea');
+        html2pdf().from(element).save("Account_Report.pdf");
+    }
+</script>
+
+</body>
+</html>
